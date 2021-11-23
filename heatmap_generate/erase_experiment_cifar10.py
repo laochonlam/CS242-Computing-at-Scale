@@ -7,6 +7,7 @@ import warnings
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
@@ -20,7 +21,7 @@ import torchvision.models as models
 
 from torchvision.utils import save_image
 
-from preprocess import MyEraseCircleTransform, MyRandomErasePixelTransform, MyEraseEvenTransform, MyEraseJPEGTransform
+from preprocess import MyEraseTransform, MyEraseCircleTransform, MyRandomErasePixelTransform, MyEraseEvenTransform, MyEraseJPEGTransform
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -92,7 +93,27 @@ parser.add_argument('--heatmap', dest='heatmap', action='store_true',
                     help='use quantized model')    
 best_acc1 = 0
 
+class Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = torch.flatten(x, 1) # flatten all dimensions except batch
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+
+classes = ('plane', 'car', 'bird', 'cat',
+           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 def main():
     args = parser.parse_args()
@@ -151,16 +172,18 @@ def main_worker(gpu, ngpus_per_node, args):
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
     # create model
-    if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
-        if (args.quantize):
-            fake_model = models.__dict__[args.arch](pretrained=True)
-            model = models.quantization.__dict__[args.arch](pretrained=True, quantize=True)
-        else:
-            model = models.__dict__[args.arch](pretrained=True)
-    else:
-        print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+    # if args.pretrained:
+    #     print("=> using pre-trained model '{}'".format(args.arch))
+    #     if (args.quantize):
+    #         fake_model = models.__dict__[args.arch](pretrained=True)
+    #         model = models.quantization.__dict__[args.arch](pretrained=True, quantize=True)
+    #     else:
+    #         model = models.__dict__[args.arch](pretrained=True)
+    # else:
+    #     print("=> creating model '{}'".format(args.arch))
+    #     model = models.__dict__[args.arch]()
+
+    model = Net()
 
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
@@ -230,11 +253,16 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    NUM_GRID = 100
+    GRID_width = 8
+    GRID_height = 8
+
+    width_block = int(32 / GRID_width)
+    height_block = int(32 / GRID_height)
+
 
     if (args.heatmap):
-        run_time = NUM_GRID
-    else 
+        run_time = GRID_width * GRID_height
+    else:
         run_time = 1
     for i in range(run_time):
         # Data loading code
@@ -247,30 +275,43 @@ def main_worker(gpu, ngpus_per_node, args):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
-        train_dataset = datasets.ImageFolder(
-            traindir,
-            transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]))
+        # train_dataset = datasets.ImageFolder(
+        #     traindir,
+        #     transforms.Compose([
+        #         transforms.RandomResizedCrop(224),
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.ToTensor(),
+        #         normalize,
+        #     ]))
+        transform = transforms.Compose(
+            [transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        trainset = datasets.CIFAR10(root='./data', train=True,
+                                    download=True, transform=transform)
+
 
         if args.distributed:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+            train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
         else:
             train_sampler = None
 
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        # train_loader = torch.utils.data.DataLoader(
+        #     train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        #     num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+
+        train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=(train_sampler is None),
             num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
-        transforms_list = [
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ]
+
+        transforms_list = [transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+        
+        if (args.heatmap):
+            print("Generate Heatmap... GRID = %dx%d" % (GRID_width, GRID_height))
+            index_x = int(i / 8)
+            index_y = int(i % 8)
+            print(index_x, index_y)
+            transforms_list.append(MyEraseTransform(index_x * width_block, index_y * width_block, width_block, height_block, 0))
         if (args.pattern == "circle"):
             print("Append Preprocess: *%s* erase with hidden ratio = %f" % (args.pattern, args.hidden_ratio))
             transforms_list.append(MyEraseCircleTransform(224, 1 - args.hidden_ratio, 0))
@@ -291,24 +332,36 @@ def main_worker(gpu, ngpus_per_node, args):
 
         val_transforms = transforms.Compose(transforms_list)
 
-        val_loader = torch.utils.data.DataLoader(
-            datasets.ImageFolder(valdir, val_transforms),
+        # val_loader = torch.utils.data.DataLoader(
+        #     datasets.ImageFolder(valdir, val_transforms),
+        #     batch_size=args.batch_size, shuffle=False,
+        #     num_workers=args.workers, pin_memory=True)
+
+        testset = datasets.CIFAR10(root='./data', train=False,
+                                            download=True, transform=val_transforms)
+                                            
+        val_loader = torch.utils.data.DataLoader(testset, 
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=True)
 
         # Enable this to see the pattern
-        # for i, (images, target) in enumerate(val_loader):
-        #     save_image(images[0], 'myimg.png')
-        #     exit(1)
+        for i, (images, target) in enumerate(val_loader):
+            save_image(images[0], str(index_x) + str(index_y) + '.png')
+            break
+            
 
         if args.evaluate:
             validate(val_loader, model, criterion, args)
-            return
+            # return
+            continue
 
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args)
+            # adjust_learning_rate(optimizer, epoch, args)
+
+            criterion = nn.CrossEntropyLoss()
+            optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
             # train for one epoch
             train(train_loader, model, criterion, optimizer, epoch, args)

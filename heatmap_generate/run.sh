@@ -1,0 +1,1 @@
+python3 erase_experiment.py -a resnet50  -j 32 -e --pretrained --heatmap /data/imagenet18_all/data/imagenet/
