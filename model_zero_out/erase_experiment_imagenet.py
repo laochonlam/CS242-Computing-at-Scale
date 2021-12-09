@@ -97,30 +97,32 @@ best_acc1 = 0
 
 args = parser.parse_args()
 
-def skip_computation(self, input, output):
+def skip_computation_pre(self, input):
 
-    # 112 
-    total_size = output.data.size(dim=-1)
+    total_size = input[0].size(dim=-1)
+
+    # print(len(input))
+    # print("total size: " + str(total_size))
     
-    # total_size = 112
     hidden_ratio = float(args.hidden_ratio_for_model)
 
     calculation = 1 - hidden_ratio
     bound = total_size - int(math.sqrt(total_size * total_size * calculation))
 
-    output.data[:,:, 0: int(bound / 2 + bound % 2), 0: total_size] = 0
+    input[0].data[:,:, 0: int(bound / 2 + bound % 2), 0: total_size] = 0
     # print("[%d: %d, %d: %d]" % (0, int(bound / 2 + bound % 2), 0, total_size))    
-    output.data[:,:, total_size - int(bound / 2): total_size, 0: total_size] = 0
+    input[0].data[:,:, total_size - int(bound / 2): total_size, 0: total_size] = 0
     # print("[%d: %d, %d: %d]" % (total_size - int(bound / 2), total_size, 0, total_size))
-    output.data[:,:, 0: total_size, total_size - int(bound / 2 + bound % 2) : total_size] = 0
+    input[0].data[:,:, 0: total_size, total_size - int(bound / 2 + bound % 2) : total_size] = 0
     # print("[%d: %d, %d: %d]" % (0, total_size, total_size - int(bound / 2 + bound % 2), total_size))
-    output.data[:,:, 0: total_size, 0: int(bound / 2 )] = 0
+    input[0].data[:,:, 0: total_size, 0: int(bound / 2 )] = 0
     # print("[%d: %d, %d: %d]" % (0, total_size, 0, int(bound / 2 )))
 
-    total_erase = total_size*total_size - torch.count_nonzero(output.data[0][0]).item()
-    # print("total_erase: " + str(total_erase))
-    # print("total_pixel: " + str(total_size * total_size))
-    # print("the percentage of zero pixel: " + str(total_erase / (total_size * total_size)))
+    total_erase = total_size*total_size - torch.count_nonzero(input[0].data[0][0]).item()
+    print("total_erase: " + str(total_erase))
+    print("total_pixel: " + str(total_size * total_size))
+    print("the percentage of zero pixel: " + str(total_erase / (total_size * total_size)))
+
 
 def main():
 
@@ -187,7 +189,7 @@ def main_worker(gpu, ngpus_per_node, args):
             model = models.quantization.__dict__[args.arch](pretrained=True, quantize=True)
         else:
             model = models.__dict__[args.arch](pretrained=True)
-            model.conv1.register_forward_hook(skip_computation)
+            model.conv1.register_forward_pre_hook(skip_computation_pre)
     else:
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
