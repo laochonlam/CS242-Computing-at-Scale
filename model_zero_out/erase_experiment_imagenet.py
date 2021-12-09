@@ -119,14 +119,14 @@ def skip_computation_pre(self, input):
     # print("[%d: %d, %d: %d]" % (0, total_size, 0, int(bound / 2 )))
 
     total_erase = total_size*total_size - torch.count_nonzero(input[0].data[0][0]).item()
-    print("total_erase: " + str(total_erase))
-    print("total_pixel: " + str(total_size * total_size))
-    print("the percentage of zero pixel: " + str(total_erase / (total_size * total_size)))
+    # print("total_erase: " + str(total_erase))
+    # print("total_pixel: " + str(total_size * total_size))
+    # print("the percentage of zero pixel: " + str(total_erase / (total_size * total_size)))
 
 
 def main():
 
-    print("hidden_ratio_for_model: " + str(args.hidden_ratio_for_model))
+    # print("hidden_ratio_for_model: " + str(args.hidden_ratio_for_model))
         
     # Enable this to fake Pytorch we don't have GPU
     # Because quantization doesn't support GPU. We have to fake it to CPU
@@ -189,7 +189,6 @@ def main_worker(gpu, ngpus_per_node, args):
             model = models.quantization.__dict__[args.arch](pretrained=True, quantize=True)
         else:
             model = models.__dict__[args.arch](pretrained=True)
-            model.conv1.register_forward_pre_hook(skip_computation_pre)
     else:
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
@@ -344,37 +343,48 @@ def main_worker(gpu, ngpus_per_node, args):
         # for i, (images, target) in enumerate(val_loader):
         #     save_image(images[0], str(index_x) + str(index_y) + '.png')
         #     break
-            
+        all_layer_test = True
+        if (all_layer_test):
+            conv_layer_list = []
+            for layer in model.modules():
+                if isinstance(layer, nn.Conv2d):
+                    conv_layer_list.append(layer)
+            print(len(conv_layer_list))
+            conv_layer_count = 0
+            for conv_layer in conv_layer_list:
+                if args.evaluate:
+                    print("hidden_ratio: " + str(args.hidden_ratio_for_model) + ", conv layer: " + str(conv_layer_count))
+                    conv_layer_count += 1 
+                    handler = conv_layer.register_forward_pre_hook(skip_computation_pre)
+                    validate(val_loader, model, criterion, args)
+                    handler.remove()
+                    # return
+                    continue
 
-        if args.evaluate:
-            validate(val_loader, model, criterion, args)
-            # return
-            continue
+                for epoch in range(args.start_epoch, args.epochs):
+                    if args.distributed:
+                        train_sampler.set_epoch(epoch)
+                    adjust_learning_rate(optimizer, epoch, args)
 
-        for epoch in range(args.start_epoch, args.epochs):
-            if args.distributed:
-                train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args)
+                    # train for one epoch
+                    train(train_loader, model, criterion, optimizer, epoch, args)
 
-            # train for one epoch
-            train(train_loader, model, criterion, optimizer, epoch, args)
+                    # evaluate on validation set
+                    acc1 = validate(val_loader, model, criterion, args)
 
-            # evaluate on validation set
-            acc1 = validate(val_loader, model, criterion, args)
+                    # remember best acc@1 and save checkpoint
+                    is_best = acc1 > best_acc1
+                    best_acc1 = max(acc1, best_acc1)
 
-            # remember best acc@1 and save checkpoint
-            is_best = acc1 > best_acc1
-            best_acc1 = max(acc1, best_acc1)
-
-            if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                    and args.rank % ngpus_per_node == 0):
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': args.arch,
-                    'state_dict': model.state_dict(),
-                    'best_acc1': best_acc1,
-                    'optimizer' : optimizer.state_dict(),
-                }, is_best)
+                    if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+                            and args.rank % ngpus_per_node == 0):
+                        save_checkpoint({
+                            'epoch': epoch + 1,
+                            'arch': args.arch,
+                            'state_dict': model.state_dict(),
+                            'best_acc1': best_acc1,
+                            'optimizer' : optimizer.state_dict(),
+                        }, is_best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -466,7 +476,7 @@ def validate(val_loader, model, criterion, args):
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
             
-        with open('results.txt', 'a') as f:
+        with open('results_' + str(args.hidden_ratio_for_model) + '.txt', 'a') as f:
             f.write(str(args.delete_blocks) + ", " + str(top1.avg) + ", " + str(top5.avg) + "\n")
 
 

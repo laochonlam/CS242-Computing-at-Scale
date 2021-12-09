@@ -1,4 +1,4 @@
-python3 erase_experiment_imagenet.py -a resnet50  -j 32 -b 2048 -e --pretrained --hidden-ratio-for-model 0 ~/imagenet18/data/imagenet/
+# python3 erase_experiment_imagenet.py -a resnet50  -j 32 -b 2048 -e --pretrained --hidden-ratio-for-model 0 ~/imagenet18/data/imagenet/
 python3 erase_experiment_imagenet.py -a resnet50  -j 32 -b 2048 -e --pretrained --hidden-ratio-for-model 0.125 ~/imagenet18/data/imagenet/
 python3 erase_experiment_imagenet.py -a resnet50  -j 32 -b 2048 -e --pretrained --hidden-ratio-for-model 0.25 ~/imagenet18/data/imagenet/
 python3 erase_experiment_imagenet.py -a resnet50  -j 32 -b 2048 -e --pretrained --hidden-ratio-for-model 0.375 ~/imagenet18/data/imagenet/
