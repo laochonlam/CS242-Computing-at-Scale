@@ -2,3 +2,4 @@
 data
 *_images
 __pycache__
+/model_zero_out/kevin_erase_experiment_imagenet.py
