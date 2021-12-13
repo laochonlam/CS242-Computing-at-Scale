@@ -4,6 +4,7 @@ import random
 import shutil
 import time
 import warnings
+import math 
 
 import torch
 import torch.nn as nn
@@ -92,11 +93,61 @@ parser.add_argument('--heatmap', dest='heatmap', action='store_true',
                     help='use quantized model')    
 best_acc1 = 0
 
+args = parser.parse_args()
+
+# How many grid in a row
+GRID_width = 8
+# How many grid in a col
+GRID_height = 8
+# How many Heatmap 
+HEATMAP_COUNT = GRID_width * GRID_height
+
+idx_remove = 0
+conv_layer_count = -1
+
+def skip_computation_pre(self, input):
+
+    image_size = input[0].size(dim=-1)
+
+    # block width
+    width_block = int(image_size / GRID_width)
+    # block height
+    height_block = int(image_size / GRID_height)
+
+    print("conv_layer: " + str(conv_layer_count) + ", idx_remove: " + str(idx_remove))
+    x_idx = int(idx_remove / 8)
+    y_idx = int(idx_remove % 8)
+    
+    input[0].data[:,:, width_block * x_idx: width_block * (x_idx + 1), height_block * y_idx: height_block * (y_idx + 1)] = 0
+    print("[%d: %d, %d: %d]" % (width_block * x_idx, width_block * (x_idx + 1), height_block * y_idx, height_block * (y_idx + 1)))
+
+    # print(len(input))
+    # print("total size: " + str(total_size))
+    
+    # hidden_ratio = float(args.hidden_ratio_for_model)
+
+    # calculation = 1 - hidden_ratio
+    # bound = total_size - int(math.sqrt(total_size * total_size * calculation))
+
+    # input[0].data[:,:, 0: int(bound / 2 + bound % 2), 0: total_size] = 0
+    # # print("[%d: %d, %d: %d]" % (0, int(bound / 2 + bound % 2), 0, total_size))    
+    # input[0].data[:,:, total_size - int(bound / 2): total_size, 0: total_size] = 0
+    # # print("[%d: %d, %d: %d]" % (total_size - int(bound / 2), total_size, 0, total_size))
+    # input[0].data[:,:, 0: total_size, total_size - int(bound / 2 + bound % 2) : total_size] = 0
+    # # print("[%d: %d, %d: %d]" % (0, total_size, total_size - int(bound / 2 + bound % 2), total_size))
+    # input[0].data[:,:, 0: total_size, 0: int(bound / 2 )] = 0
+    # # print("[%d: %d, %d: %d]" % (0, total_size, 0, int(bound / 2 )))
+
+    # total_erase = total_size*total_size - torch.count_nonzero(input[0].data[0][0]).item()
+    # print("total_erase: " + str(total_erase))
+    # print("total_pixel: " + str(total_size * total_size))
+    # print("the percentage of zero pixel: " + str(total_erase / (total_size * total_size)))
 
 
 def main():
-    args = parser.parse_args()
 
+    # print("hidden_ratio_for_model: " + str(args.hidden_ratio_for_model))
+        
     # Enable this to fake Pytorch we don't have GPU
     # Because quantization doesn't support GPU. We have to fake it to CPU
     if args.quantize:
@@ -230,13 +281,6 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    GRID_width = 8
-    GRID_height = 8
-
-    width_block = int(224 / GRID_width)
-    height_block = int(224 / GRID_height)
-
-
     if (args.heatmap):
         run_time = GRID_width * GRID_height
     else:
@@ -308,40 +352,53 @@ def main_worker(gpu, ngpus_per_node, args):
             num_workers=args.workers, pin_memory=True)
 
         # Enable this to see the pattern
-        for i, (images, target) in enumerate(val_loader):
-            save_image(images[0], str(index_x) + str(index_y) + '.png')
-            break
-            
+        # for i, (images, target) in enumerate(val_loader):
+        #     save_image(images[0], str(index_x) + str(index_y) + '.png')
+        #     break
+        all_layer_test = True
+        if (all_layer_test):
+            conv_layer_list = []
+            for layer in model.modules():
+                if isinstance(layer, nn.Conv2d):
+                    conv_layer_list.append(layer)
+            print(len(conv_layer_list))
+            for conv_layer in conv_layer_list:
+                global conv_layer_count
+                conv_layer_count += 1 
+                for i in range(HEATMAP_COUNT):
+                    global idx_remove
+                    idx_remove = i
+                    if args.evaluate:
+                        handler = conv_layer.register_forward_pre_hook(skip_computation_pre)
+                        validate(val_loader, model, criterion, args)
+                        handler.remove()
+                        # return
+                        # continue
 
-        if args.evaluate:
-            validate(val_loader, model, criterion, args)
-            # return
-            continue
+                # for epoch in range(args.start_epoch, args.epochs):
+                #     if args.distributed:
+                #         train_sampler.set_epoch(epoch)
+                #     adjust_learning_rate(optimizer, epoch, args)
 
-        for epoch in range(args.start_epoch, args.epochs):
-            if args.distributed:
-                train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args)
+                #     # train for one epoch
+                #     train(train_loader, model, criterion, optimizer, epoch, args)
 
-            # train for one epoch
-            train(train_loader, model, criterion, optimizer, epoch, args)
+                #     # evaluate on validation set
+                #     acc1 = validate(val_loader, model, criterion, args)
 
-            # evaluate on validation set
-            acc1 = validate(val_loader, model, criterion, args)
+                #     # remember best acc@1 and save checkpoint
+                #     is_best = acc1 > best_acc1
+                #     best_acc1 = max(acc1, best_acc1)
 
-            # remember best acc@1 and save checkpoint
-            is_best = acc1 > best_acc1
-            best_acc1 = max(acc1, best_acc1)
-
-            if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                    and args.rank % ngpus_per_node == 0):
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': args.arch,
-                    'state_dict': model.state_dict(),
-                    'best_acc1': best_acc1,
-                    'optimizer' : optimizer.state_dict(),
-                }, is_best)
+                #     if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+                #             and args.rank % ngpus_per_node == 0):
+                #         save_checkpoint({
+                #             'epoch': epoch + 1,
+                #             'arch': args.arch,
+                #             'state_dict': model.state_dict(),
+                #             'best_acc1': best_acc1,
+                #             'optimizer' : optimizer.state_dict(),
+                #         }, is_best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -433,9 +490,16 @@ def validate(val_loader, model, criterion, args):
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
             
-        with open('results.txt', 'a') as f:
-            f.write(str(args.delete_blocks) + ", " + str(top1.avg) + ", " + str(top5.avg) + "\n")
+        with open('results@1_cnvlayer' + str(conv_layer_count) + '.txt', 'a') as f:
+            f.write("{:.5f}".format(top1.avg.item()) + ",")
+            if ((idx_remove + 1) % 8 == 0):
+                f.write("\n")
+        with open('results@5_cnvlayer' + str(conv_layer_count) + '.txt', 'a') as f:
+            f.write("{:.5f}".format(top5.avg.item()) + ",")
+            if ((idx_remove + 1) % 8 == 0):
+                f.write("\n")
 
+            # f.write(str(args.delete_blocks) + ", " + str(top1.avg) + ", " + str(top5.avg) + "\n")
 
     return top1.avg
 
