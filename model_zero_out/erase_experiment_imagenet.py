@@ -99,7 +99,6 @@ args = parser.parse_args()
 
 conv_layer_count = 0
 
-
 heatmap_per_layer=[]
 for i in range(53):
     file_path = "../heatmap_generate/heatmap_results/acc5/results@5_cnvlayer" + \
@@ -114,6 +113,8 @@ class myHook():
     def __init__(self, name, conv_layer_count):
         self.name = name
         self.conv_layer_count = conv_layer_count
+        self.erase_pixel = 0
+        self.total_pixel = 0
 
     def skip_computation_pre(self, mode, input):
         print("Using heatmap: ", self.conv_layer_count)
@@ -131,7 +132,7 @@ class myHook():
         # print("total size: " + str(total_size))
 
         hidden_ratio = float(args.hidden_ratio_for_model)
-        print(hidden_ratio)
+        # print(hidden_ratio)
         total_pixels_to_skip = total_pixels * hidden_ratio
         # print("total pixels to skip: " + str(total_pixels_to_skip))
 
@@ -146,22 +147,24 @@ class myHook():
             x = int((region_idx / heatmap_size) * scale_factor)
             y = int((region_idx % heatmap_size) * scale_factor)
 
-        # skip a full region
-        if total_pixels_to_skip > region_size:
-            input[0].data[:, :, y: int(y + scale_factor),
-                        x: int(x + scale_factor)] = 0
-            total_pixels_skipped += int(scale_factor) * int(scale_factor)
+            # skip a full region
+            if total_pixels_to_skip > region_size:
+                input[0].data[:, :, y: int(y + scale_factor),
+                            x: int(x + scale_factor)] = 0
+                total_pixels_skipped += int(scale_factor) * int(scale_factor)
 
-        # skip a partial region
-        elif total_pixels_to_skip > 0:
-            for i in range(int(scale_factor)):
-                if total_pixels_to_skip > 0:
-                    input[0].data[:, :, y + i: y + i + 1, x: int(x + scale_factor)] = 0
-                    total_pixels_skipped += int(scale_factor)
+            # skip a partial region
+            elif total_pixels_to_skip > 0:
+                for i in range(int(scale_factor)):
+                    if total_pixels_to_skip > 0:
+                        input[0].data[:, :, y + i: y + i + 1, x: int(x + scale_factor)] = 0
+                        total_pixels_skipped += int(scale_factor)
 
         # Testing check
-        # print("Total erased: " + str(total_pixels_skipped))
-        # print("Total pixels: " + str(total_pixels))
+        print("Total erased: " + str(total_pixels_skipped))
+        print("Total pixels: " + str(total_pixels))
+        self.total_pixel = total_pixels
+        self.erase_pixel = total_pixels_skipped
         print("The percentage of zero pixels: " +
             str(total_pixels_skipped / total_pixels))
             
@@ -396,13 +399,29 @@ def main_worker(gpu, ngpus_per_node, args):
             global conv_layer_count
             conv_layer_count = len(conv_layer_list)
             conv_layer_list.reverse()
+            hook_list = []
             for conv_layer in conv_layer_list:
                 if args.evaluate:
                     print("hidden_ratio: " + str(args.hidden_ratio_for_model) + ", conv layer: " + str(conv_layer_count))
                     conv_layer_count -= 1 
                     my_hook = myHook(str(conv_layer_count), conv_layer_count)
                     handler = conv_layer.register_forward_pre_hook(my_hook.skip_computation_pre)
+
                     validate(val_loader, model, criterion, args)
+
+                    hook_list.append(my_hook)
+                    erase_pixel_for_current_hooked_layer = 0
+                    total_pixel_for_current_hooked_layer = 0
+                    for hook in hook_list:
+                        erase_pixel_for_current_hooked_layer += hook.erase_pixel
+                        total_pixel_for_current_hooked_layer += hook.total_pixel
+                        hook.erase_pixel = 0
+                        hook.total_pixel = 0
+                    print("erase_pixel_for_current_hooked_layer: " + str(erase_pixel_for_current_hooked_layer))
+                    print("total_pixel_for_current_hooked_layer: " + str(total_pixel_for_current_hooked_layer))
+
+                    with open('results_' + str(args.hidden_ratio_for_model) + '.txt', 'a') as f:
+                        f.write(str(erase_pixel_for_current_hooked_layer) + ", " + str(total_pixel_for_current_hooked_layer) + "\n")
                     # handler.remove()
                     # return
                     continue
@@ -521,9 +540,10 @@ def validate(val_loader, model, criterion, args):
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
-            
+        
+        
         with open('results_' + str(args.hidden_ratio_for_model) + '.txt', 'a') as f:
-            f.write(str(args.delete_blocks) + ", " + str(top1.avg) + ", " + str(top5.avg) + "\n")
+            f.write(str(conv_layer_count) + ", " + "{:.5f}".format(top1.avg.item()) + ", " + "{:.5f}".format(top5.avg.item()) +", ")
 
 
     return top1.avg
