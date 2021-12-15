@@ -123,6 +123,7 @@ class myHook():
         # print("Using heatmap: ", heatmap)
 
         total_size = input[0].size(dim=-1)
+        filter_size = input[0].size(dim=1)
         scale_factor = float(total_size / heatmap_size)
         total_pixels = total_size * total_size
         region_size = scale_factor * scale_factor
@@ -163,8 +164,8 @@ class myHook():
         # Testing check
         print("Total erased: " + str(total_pixels_skipped))
         print("Total pixels: " + str(total_pixels))
-        self.total_pixel = total_pixels
-        self.erase_pixel = total_pixels_skipped
+        self.total_pixel = total_pixels * filter_size
+        self.erase_pixel = total_pixels_skipped * filter_size
         print("The percentage of zero pixels: " +
             str(total_pixels_skipped / total_pixels))
             
@@ -410,18 +411,20 @@ def main_worker(gpu, ngpus_per_node, args):
                     validate(val_loader, model, criterion, args)
 
                     hook_list.append(my_hook)
-                    erase_pixel_for_current_hooked_layer = 0
-                    total_pixel_for_current_hooked_layer = 0
+                    erase_pixel_until_current_hooked_layer = 0
+                    total_pixel_until_current_hooked_layer = 0
                     for hook in hook_list:
-                        erase_pixel_for_current_hooked_layer += hook.erase_pixel
-                        total_pixel_for_current_hooked_layer += hook.total_pixel
+                        erase_pixel_until_current_hooked_layer += hook.erase_pixel
+                        total_pixel_until_current_hooked_layer += hook.total_pixel
                         hook.erase_pixel = 0
                         hook.total_pixel = 0
-                    print("erase_pixel_for_current_hooked_layer: " + str(erase_pixel_for_current_hooked_layer))
-                    print("total_pixel_for_current_hooked_layer: " + str(total_pixel_for_current_hooked_layer))
-
+                    print("erase_pixel_until_current_hooked_layer: " + str(erase_pixel_until_current_hooked_layer))
+                    print("total_pixel_until_current_hooked_layer: " + str(total_pixel_until_current_hooked_layer))
+                    all_skip = "%.3f" % ((float(erase_pixel_until_current_hooked_layer) / 10662400.0)* 100)
                     with open('results_' + str(args.hidden_ratio_for_model) + '.txt', 'a') as f:
-                        f.write(str(erase_pixel_for_current_hooked_layer) + ", " + str(total_pixel_for_current_hooked_layer) + "\n")
+                        f.write(str(erase_pixel_until_current_hooked_layer) + ", " + str(total_pixel_until_current_hooked_layer) + ", ")
+                        f.write(str("%.3f" % ((float(erase_pixel_until_current_hooked_layer) / float(
+                            total_pixel_until_current_hooked_layer)) * 100)) + ", " + str(all_skip) + "\n")
                     # handler.remove()
                     # return
                     continue
