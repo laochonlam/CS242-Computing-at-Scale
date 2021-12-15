@@ -24,5 +24,5 @@ $ ./heatmap_results/run.sh
 
 For Step 2 (Zeroing Out Model):
 ```
-$ ./heatmap_results/run.sh
+$ ./model_zero_out/run.sh
 ```

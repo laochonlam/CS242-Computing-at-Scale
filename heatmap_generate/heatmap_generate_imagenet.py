@@ -105,6 +105,8 @@ HEATMAP_COUNT = GRID_width * GRID_height
 idx_remove = 0
 conv_layer_count = -1
 
+# We generate the layers' heatmaps by using OBE, which is to remove different 8x8 input areas 
+# and see if the accuracy drops. This is for identifying the important input areas for a layer.
 def skip_computation_pre(self, input):
 
     image_size = input[0].size(dim=-1)
@@ -120,28 +122,6 @@ def skip_computation_pre(self, input):
     
     input[0].data[:,:, width_block * x_idx: width_block * (x_idx + 1), height_block * y_idx: height_block * (y_idx + 1)] = 0
     print("[%d: %d, %d: %d]" % (width_block * x_idx, width_block * (x_idx + 1), height_block * y_idx, height_block * (y_idx + 1)))
-
-    # print(len(input))
-    # print("total size: " + str(total_size))
-    
-    # hidden_ratio = float(args.hidden_ratio_for_model)
-
-    # calculation = 1 - hidden_ratio
-    # bound = total_size - int(math.sqrt(total_size * total_size * calculation))
-
-    # input[0].data[:,:, 0: int(bound / 2 + bound % 2), 0: total_size] = 0
-    # # print("[%d: %d, %d: %d]" % (0, int(bound / 2 + bound % 2), 0, total_size))    
-    # input[0].data[:,:, total_size - int(bound / 2): total_size, 0: total_size] = 0
-    # # print("[%d: %d, %d: %d]" % (total_size - int(bound / 2), total_size, 0, total_size))
-    # input[0].data[:,:, 0: total_size, total_size - int(bound / 2 + bound % 2) : total_size] = 0
-    # # print("[%d: %d, %d: %d]" % (0, total_size, total_size - int(bound / 2 + bound % 2), total_size))
-    # input[0].data[:,:, 0: total_size, 0: int(bound / 2 )] = 0
-    # # print("[%d: %d, %d: %d]" % (0, total_size, 0, int(bound / 2 )))
-
-    # total_erase = total_size*total_size - torch.count_nonzero(input[0].data[0][0]).item()
-    # print("total_erase: " + str(total_erase))
-    # print("total_pixel: " + str(total_size * total_size))
-    # print("the percentage of zero pixel: " + str(total_erase / (total_size * total_size)))
 
 
 def main():
@@ -351,10 +331,7 @@ def main_worker(gpu, ngpus_per_node, args):
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=True)
 
-        # Enable this to see the pattern
-        # for i, (images, target) in enumerate(val_loader):
-        #     save_image(images[0], str(index_x) + str(index_y) + '.png')
-        #     break
+        # We generates the heatmaps from here
         all_layer_test = True
         if (all_layer_test):
             conv_layer_list = []
@@ -374,32 +351,6 @@ def main_worker(gpu, ngpus_per_node, args):
                         handler.remove()
                         # return
                         # continue
-
-                # for epoch in range(args.start_epoch, args.epochs):
-                #     if args.distributed:
-                #         train_sampler.set_epoch(epoch)
-                #     adjust_learning_rate(optimizer, epoch, args)
-
-                #     # train for one epoch
-                #     train(train_loader, model, criterion, optimizer, epoch, args)
-
-                #     # evaluate on validation set
-                #     acc1 = validate(val_loader, model, criterion, args)
-
-                #     # remember best acc@1 and save checkpoint
-                #     is_best = acc1 > best_acc1
-                #     best_acc1 = max(acc1, best_acc1)
-
-                #     if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                #             and args.rank % ngpus_per_node == 0):
-                #         save_checkpoint({
-                #             'epoch': epoch + 1,
-                #             'arch': args.arch,
-                #             'state_dict': model.state_dict(),
-                #             'best_acc1': best_acc1,
-                #             'optimizer' : optimizer.state_dict(),
-                #         }, is_best)
-
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')

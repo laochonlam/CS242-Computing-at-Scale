@@ -108,7 +108,8 @@ for i in range(53):
 
     heatmap_per_layer.append(data)
 
-
+# This is the hook class for zeroing out the input value in a layer
+# with the help of heatmaps generated before.
 class myHook():
     def __init__(self, name, conv_layer_count):
         self.name = name
